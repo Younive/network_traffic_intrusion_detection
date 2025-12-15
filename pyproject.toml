@@ -1,0 +1,12 @@
+[project]
+name = "network-traffic-anomalies-detection"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "confluent-kafka>=2.12.2",
+    "findspark>=2.0.1",
+    "notebook>=7.5.0",
+    "pandas>=2.3.3",
+]
