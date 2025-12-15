@@ -1,0 +1,178 @@
+version: '3.8'
+
+services:
+  # ----------------------------
+  # KAFKA ECOSYSTEM (Confluent)
+  # ----------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - data-network
+    # ADDED: Health check
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy  # CHANGED: Wait for zookeeper health
+    ports:
+      - "9092:9092"
+    environment:
+      # FIX: Changed KAFKA_kafka_ID to KAFKA_BROKER_ID
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Auto-create topics
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      # Log retention (7 days)
+      KAFKA_LOG_RETENTION_HOURS: 168
+      # Increase message size limit (for large network data)
+      KAFKA_MESSAGE_MAX_BYTES: 10485760
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 10485760
+    networks:
+      - data-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Volume for Kafka data persistence
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:29092"
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    networks:
+      - data-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.5.0
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: "kafka:29092"
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      PORT: 9021
+    networks:
+      - data-network
+
+  # ----------------------------
+  # SPARK ECOSYSTEM (Official Apache)
+  # ----------------------------
+  spark-master:
+    build:
+      context: .
+      dockerfile: Docker.spark
+    container_name: spark-master
+    hostname: spark-master
+    user: root
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_MASTER_WEBUI_PORT=8080
+    ports:
+      - "8080:8080"  # Spark Master UI
+      - "7077:7077"  # Internal Master Port
+      - "4040:4040"  # Spark Driver UI
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      # Checkpoints directory
+      - ./checkpoints:/app/checkpoints
+    networks:
+      - data-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  spark-worker:
+    build:
+      context: .
+      dockerfile: Docker.spark
+    container_name: spark-worker
+    user: root
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=4G
+      # Master URL
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      # Worker web UI port
+      - SPARK_WORKER_WEBUI_PORT=8081
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    ports:
+      - "8082:8081"  # Spark Worker UI
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./models:/app/models
+      # Checkpoints directory
+      - ./checkpoints:/app/checkpoints
+    networks:
+      - data-network
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  data-network:
+    driver: bridge
+
+volumes:
+  kafka-data:
+    driver: local
