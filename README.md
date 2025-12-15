@@ -27,9 +27,13 @@ The system follows a decoupled microservices architecture containerized with Doc
 
 ## Tech Stack
 **- Language:** Python 3.9
+
 **- Big Data Engine:** Apache Spark (Pyspark), Spark SQL, Spark MLlib
+
 **- Message Broker:** Apache Kafka
+
 **- Containerization:** Docker, Docker Compose
+
 **- Dependency Management:** uv
 
 ## Getting Startd
