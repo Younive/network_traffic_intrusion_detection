@@ -71,7 +71,7 @@ def run_producer():
                         rate = message_sent / elapsed_time if elapsed_time > 0 else 0
                         print(f"Batch {batch_count}: {batch_size} messages sent. Rate: {rate:.2f} msg/s")
 
-                    time.sleep(SLEEP_TIME)
+                    time.sleep(0.1)
 
                 except Exception as e:
                     print(f"Error processing row {i}: {e}")

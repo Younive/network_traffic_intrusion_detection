@@ -72,11 +72,11 @@ Run the simulation to generate real-time network traffic data and apply the Rand
 
 #### Terminal 1: The Detector (Starts the Engine listening to the Kafka topic)
 ```bash
-
+docker exec -it spark-master /opt/spark/bin/spark-submit /app/src/detect_stream.py
 ```
 ### Terminal 2: The Producer (Starts the Kafka producer)
 ```bash
-
+docker exec -it spark-master python /app/src/producer.py
 ```
 
 ## Dashborad Output

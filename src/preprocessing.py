@@ -12,22 +12,24 @@ class NetworkTrafficPreprocessor:
         """
         Normalize column names by removing leading/trailing whitespace. an handle duplicate columns
         """
-        # Remove leading/trailing whitespace and handle duplicate columns
-        normalized_columns = [c.strip() for c in df.columns]
+        # Get current columns
+        current_cols = df.columns
         
-        # Remove duplicate columns
-        final_columns = []
+        # Build select expressions for unique, cleaned columns
+        select_exprs = []
         seen_columns = set()
-        for col_name in normalized_columns:
-            if col_name not in seen_columns:
-                final_columns.append(col_name)
-                seen_columns.add(col_name)
+        
+        for col_name in current_cols:
+            clean_name = col_name.strip()
+            if clean_name not in seen_columns:
+                select_exprs.append(col(col_name).alias(clean_name))
+                seen_columns.add(clean_name)
             else:
-                print(f'Column {col_name} is a duplicate and will be dropped.')
+                print(f'Column {clean_name} is a duplicate and will be dropped.')
 
-        return df.toDF(*final_columns)
+        return df.select(*select_exprs)
 
-    def cast_and_clean_features(self, df: DataFrame) -> DataFrame:
+    def cast_and_clean_features(self, df: DataFrame, inference=True) -> DataFrame:
         """
         Cast feature columns to DoubleType and handle invalid values
         """
@@ -49,14 +51,15 @@ class NetworkTrafficPreprocessor:
             
             select_exprs.append(cleaned_col)
 
-        # Add target column (keep as string for StringIndexer)
-        select_exprs.append(col('Label'))
+        # Add target column if not inference
+        if not inference and "Label" in df.columns:
+            select_exprs.append(col('Label'))
 
         # Apply transformations in single pass
         df_clean = df.select(*select_exprs)
 
         # Drop rows where Label is null
-        df_clean = df_clean.filter(col('Label').isNotNull())
+        # df_clean = df_clean.filter(col('Label').isNotNull())
 
         return df_clean
     
@@ -94,7 +97,7 @@ class NetworkTrafficPreprocessor:
         df = self.normalize_columns(df)
 
         # Cast and clean features
-        df = self.cast_and_clean_features(df)
+        df = self.cast_and_clean_features(df, inference=False)
 
         # Map attack labels
         df = self.map_attack_labels(df)
@@ -113,7 +116,7 @@ class NetworkTrafficPreprocessor:
         df = self.normalize_columns(df)
 
         # Cast and clean features
-        df = self.cast_and_clean_features(df)
+        df = self.cast_and_clean_features(df, inference=True)
 
         # Map attack labels
         if 'Label' in df.columns:
