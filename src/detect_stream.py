@@ -14,7 +14,7 @@ spark = SparkSession.builder \
     .config('spark.sql.streaming.checkpointLocation', '/app/data/checkpoints/streaming') \
     .getOrCreate()
 
-KAFKA_BOOTSTRAP_SERVERS = 'kafka:29029'
+KAFKA_BOOTSTRAP_SERVERS = 'kafka:29092'
 KAFKA_TOPIC = 'network_traffic'
 CHECKPOINT_DIR = 'app/data/checkpoint/streaming'
 
