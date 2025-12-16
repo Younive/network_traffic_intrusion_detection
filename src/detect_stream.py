@@ -40,7 +40,7 @@ try:
         .option('subscribe', KAFKA_TOPIC) \
         .option('startingOffsets', 'latest') \
         .option('failOnDataLoss', 'false') \
-        .option('maxOffsetPerTringger', '1000') \
+        .option('maxOffsetsPerTrigger', '1000') \
         .load()
     print('Connected to Kafka successfully.')
 except Exception as e:
@@ -51,45 +51,45 @@ except Exception as e:
 # create json schema
 print('\nDefining JSON schema...')
 json_schema = StructType([
-    StructField(col_name, DoubleType(), True) for col_name in FEATURE_COLS
+    StructField(col_name, StringType(), True) for col_name in FEATURE_COLS
 ])
 print(f'Schema defined for {len(FEATURE_COLS)} features')
 
-# parse kafka value as json
+# parse kafka message
 print('\nSetting up message parsing pipeline...')
-data_stream = raw_stream.selectExpr('CAST(key AS STRING) as message_key',
-                'CAST(value AS STRING) as json_string',
-                'timestamp as kafka_timestamp',
-                'topic',
-                'partition',
-                'offset') \
+data_stream = raw_stream \
+    .selectExpr(
+        'CAST(value AS STRING) as json_string',
+        'timestamp as kafka_timestamp') \
     .select(
-        col('message_key'),
         col('kafka_timestamp'),
-        col('topic'),
-        col('offset'),
         from_json(col('json_string'), json_schema).alias('data')) \
     .select(
-        col('message_key'),
         col('kafka_timestamp'),
-        col('topic'),
-        col('partition'),
-        col('offset'),
         'data.*'
     )
+print('Casting string values to doubles...')
+cast_exprs = [col('kafka_timestamp').cast('timestamp')]
+for feature in FEATURE_COLS:
+    cast_exprs.append(
+        when(col(feature).isNull(), 0.0)
+        .otherwise(col(feature).cast(DoubleType()))
+        .alias(feature)
+    )
+data_stream = data_stream.select(*cast_exprs)
 data_stream = data_stream.na.fill(0.0)
-
+data_stream = data_stream.withColumn('processing_time', current_timestamp())
 print('Parsing pipeline configured.')
 
 # apply data preprocessing
 data_stream_clean = preprocessor.preprocess_for_inference(data_stream)
-data_steam_clean = data_steam_clean.withColumn('processing_time', current_timestamp())
 print('Preprocessing pipeline ready.')
 
 # apply model
 print('\nSetting up model inference...')
 try:
     detections_stream = model.transform(data_stream_clean)
+    print('Model inference ready\n.')
 except Exception as e:
     print(f'Error applying model: {e}')
     spark.stop()
@@ -114,7 +114,6 @@ def map_prediction(prediction_idx):
 
 # register UDF
 map_prediction_udf = udf(map_prediction, StringType())
-
 # add predicted attack label
 final_stream = detections_stream.withColumn(
     'Predicted_Attack', 
@@ -123,12 +122,7 @@ final_stream = detections_stream.withColumn(
 print(f'Prediction mapping configured. ({len(LABELS)} labels)')
 
 # select columns for console output
-output_columns = [
-    'kafka_timestamp',
-    'processing_time',
-    'Predicted_Attack',
-    'prediction'
-]
+dashboard_column = ['Predicted_Attack']
 key_features = [
     'Destination Port',
     'Flow Duration',
@@ -140,19 +134,40 @@ key_features = [
 
 for feature in key_features:
     if feature in final_stream.columns:
-        output_columns.append(feature)
+        dashboard_column.append(feature)
 
-output_steam = final_stream.select(*output_columns)
+output_steam = final_stream.select(*dashboard_column)
 
-print(f'Output Configured. Output columns: {output_columns}')
+# custom function for console output
+batch_count = [0]
+def print_dashboard(batch_df, batch_id):
+    batch_count[0] += 1
+
+    # get row count
+    count = batch_df.count()
+    if count > 0:
+        # Clear screen effect
+        print('\n' * 2)
+        print('='*80)
+        print(f'BATCH: {batch_count[0]} | Records: {count} | Timestamp: {current_timestamp()}')
+        print('='*80)
+        # show data
+        batch_df.show(
+            n=20, # show 20 rows
+            truncate=False,
+            vertical=False
+        )
+
+        print('\n Attack Summary:')
+        attack_summary = batch_df.groupBy('Predicted_Attack').count().orderBy('count', ascending=False)
+        attack_summary.show(truncate=False)
+        print('='*80 + '\n')
 
 # output sink 1: console
 print('\nStarting Console Output...')
-console_query = output_steam.writeStream \
-    .format('console') \
+query = dashboard_stream.writeStream \
+    .foreachBatch(print_dashboard) \
     .outputMode('append') \
-    .option('truncate', False) \
-    .option('numRows', 20) \
     .trigger(processingTime='5 seconds') \
     .option('checkpointLocation', f'{CHECKPOINT_DIR}/console') \
     .start()
@@ -160,6 +175,7 @@ print('Console output started.')
 
 
 print('Dashboard is live. Waiting for traffic...')
+print('='*80 + '\n')
 
 # wait for termination
 try:
@@ -170,7 +186,7 @@ except KeyboardInterrupt:
     print('Spark session stopped.')
 
 # stop all queries
-queries = [console_query]
+queries = [query]
 for query in queries:
     query.stop()
     print(f'Stopped {query.name}')
