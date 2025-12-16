@@ -136,7 +136,7 @@ for feature in key_features:
     if feature in final_stream.columns:
         dashboard_column.append(feature)
 
-output_steam = final_stream.select(*dashboard_column)
+output_stream = final_stream.select(*dashboard_column)
 
 # custom function for console output
 batch_count = [0]
@@ -165,7 +165,7 @@ def print_dashboard(batch_df, batch_id):
 
 # output sink 1: console
 print('\nStarting Console Output...')
-query = dashboard_stream.writeStream \
+query = output_stream.writeStream \
     .foreachBatch(print_dashboard) \
     .outputMode('append') \
     .trigger(processingTime='5 seconds') \
